@@ -65,8 +65,7 @@ public class Predictor {
     }
 
 
-    public boolean init(Context appCtx, String modelPath, String labelPath, int useOpencl, int cpuThreadNum, String cpuPowerMode,
-                        int detLongSize, float scoreThreshold) {
+    public boolean init(Context appCtx, String modelPath, String labelPath, int useOpencl, int cpuThreadNum, String cpuPowerMode, int detLongSize, float scoreThreshold) {
         boolean isLoaded = init(appCtx, modelPath, labelPath, useOpencl, cpuThreadNum, cpuPowerMode);
         if (!isLoaded) {
             return false;
@@ -250,9 +249,22 @@ public class Predictor {
         return false;
     }
 
-    public String getLogFileName(Date date, String s) {
+    private String getLogFileNameHelper(Date date, String type, int minute) {
         String d = new SimpleDateFormat("yyyy-MM-dd-HH").format(date);
-        return "/sdcard/充电/" + d + "-" + s + ".log";
+
+        return "/sdcard/充电/" + d + "-" + type + "-" + minute + ".log";
+    }
+
+    public int getExistLogFileCount(Date date, String s) {
+        int res = 0;
+        for (int minute = 0; minute < 60; minute++) {
+//            /sdcard/充电/2022-11-15-01-success-23.log
+            String filename = getLogFileNameHelper(date, s, minute);
+            if (isFileExist(filename)) {
+                res++;
+            }
+        }
+        return res;
     }
 
 
@@ -260,14 +272,15 @@ public class Predictor {
         if (isCharging) {
             return "success";
         } else {
-            return "fail";
+            return "failure";
         }
     }
 
     public void createLogFile(Date date, boolean isCharging) {
         try {
             String s = getTypeByChargingState(isCharging);
-            String log_filename = getLogFileName(date, s);
+            String minute = new SimpleDateFormat("m").format(date);
+            String log_filename = getLogFileNameHelper(date, s, Integer.parseInt(minute));
             File f = new File(log_filename);
             if (f.createNewFile()) {
                 System.out.println("File created");
@@ -342,13 +355,13 @@ public class Predictor {
         }
     }
 
+
     public boolean isSendMsg(Calendar calendar, Date date, boolean isCharging, List<Integer> sendMessageHours) {
         if (!isNowSendMsgHours(calendar, sendMessageHours)) {
             //现在不是发短信的时间
             return false;
         }
         //以下是可以发送短信的时间
-        String type = getTypeByChargingState(isCharging);
 
         if (isCharging) {
             //充电中，仅在每小时的50~59发短信
@@ -358,14 +371,33 @@ public class Predictor {
                 return false;
             }
         }
-
-        //判断文件是否存在，存在说明发过短信，不应该再发
-        String logFilePath = getLogFileName(date, type);
-        if (isFileExist(logFilePath)) {
-            return false;
+        String type = getTypeByChargingState(isCharging);
+        int logFileCount = getExistLogFileCount(date, type);
+        if (isCharging) {
+            if (logFileCount == 0) {
+                //第一次成功，发送短信
+                createLogFile(date, true);
+                return true;
+            } else if (logFileCount >= 1) {
+                return false;
+            } else {
+                return false;
+            }
+        } else {
+            if (logFileCount == 0) {
+                //第一次失败，只创建文件，不发送短信
+                createLogFile(date, false);
+                return false;
+            } else if (logFileCount == 1) {
+                //进入这里， 说明之前已经失败了一次，这是第二次失败，要发送短信
+                createLogFile(date, false);
+                return true;
+            } else if (logFileCount == 2) {
+                return false;
+            } else {
+                return false;
+            }
         }
-
-        return true;
     }
 
     public void sendMessageToPhoneList(List<String> phoneList, String message) {
@@ -457,7 +489,6 @@ public class Predictor {
             List<String> phoneList = getPhoneListFromFile(phoneListFilePath);
 
             sendMessageToPhoneList(phoneList, msgContent);
-            createLogFile(date, isCharging); //创建文件，标识已发送过短信
         }
 
 
